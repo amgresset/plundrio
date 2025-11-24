@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/elsbrock/plundrio/internal/log"
 )
@@ -63,6 +64,8 @@ func (tc *TransferCoordinator) StartDownload(transferID int64) error {
 	}
 
 	ctx.State = TransferLifecycleDownloading
+	ctx.StartTime = time.Now() // Track when download started
+
 	log.Info("transfer").
 		Int64("id", transferID).
 		Str("name", ctx.Name).

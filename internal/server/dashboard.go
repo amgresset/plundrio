@@ -2,7 +2,9 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/elsbrock/plundrio/internal/download"
 )
@@ -13,6 +15,8 @@ type DownloadInfo struct {
 	ProgressPercent float64 `json:"progress_percent"`
 	DownloadedMB    float64 `json:"downloaded_mb"`
 	TotalMB         float64 `json:"total_mb"`
+	SpeedMBps       float64 `json:"speed_mbps"`
+	ETA             string  `json:"eta"`
 }
 
 // handleDashboardAPI returns active downloads in JSON format
@@ -31,11 +35,29 @@ func (s *Server) handleDashboardAPI(w http.ResponseWriter, r *http.Request) {
 			totalMB := float64(ctx.TotalSize) / 1024 / 1024
 			progressPercent := (float64(ctx.DownloadedSize) / float64(ctx.TotalSize)) * 100
 
+			// Calculate speed and ETA
+			speedMBps := 0.0
+			eta := "calculating..."
+
+			if !ctx.StartTime.IsZero() && ctx.DownloadedSize > 0 {
+				elapsed := time.Since(ctx.StartTime).Seconds()
+				if elapsed > 0 {
+					speedMBps = downloadedMB / elapsed
+					remainingMB := totalMB - downloadedMB
+					if speedMBps > 0 {
+						etaSeconds := int(remainingMB / speedMBps)
+						eta = formatDuration(etaSeconds)
+					}
+				}
+			}
+
 			downloads = append(downloads, DownloadInfo{
 				Name:            ctx.Name,
 				ProgressPercent: progressPercent,
 				DownloadedMB:    downloadedMB,
 				TotalMB:         totalMB,
+				SpeedMBps:       speedMBps,
+				ETA:             eta,
 			})
 		}
 	})
@@ -189,6 +211,8 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
                                 <div class="download-stats">
                                     <span>` + "${dl.progress_percent.toFixed(1)}" + `%</span>
                                     <span>` + "${formatSize(dl.downloaded_mb)}" + ` / ` + "${formatSize(dl.total_mb)}" + `</span>
+                                    <span>` + "${(dl.speed_mbps || 0).toFixed(1)}" + ` MB/s</span>
+                                    <span>ETA: ` + "${dl.eta || 'calculating...'}" + `</span>
                                 </div>
                             </div>
                         ` + "`" + `;
@@ -207,4 +231,23 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write([]byte(html))
+}
+
+// formatDuration formats seconds into a human-readable duration
+func formatDuration(seconds int) string {
+	if seconds < 0 {
+		return "unknown"
+	}
+
+	h := seconds / 3600
+	m := (seconds % 3600) / 60
+	s := seconds % 60
+
+	if h > 0 {
+		return fmt.Sprintf("%dh%dm", h, m)
+	}
+	if m > 0 {
+		return fmt.Sprintf("%dm%ds", m, s)
+	}
+	return fmt.Sprintf("%ds", s)
 }

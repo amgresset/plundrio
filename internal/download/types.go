@@ -70,6 +70,7 @@ type TransferContext struct {
 	FailedFiles    int32 // Track number of failed files
 	TotalSize      int64 // Total size of all files in bytes
 	DownloadedSize int64 // Total downloaded bytes
+	StartTime      time.Time // When the download started
 	State          TransferLifecycleState
 	Error          error
 	Mu             sync.RWMutex
