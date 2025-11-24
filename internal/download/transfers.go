@@ -379,9 +379,9 @@ func (p *TransferProcessor) queueTransferFiles(transfer *putio.Transfer, files [
 	}
 
 	// Update the transfer context with total size
-	ctx.mu.Lock()
+	ctx.Mu.Lock()
 	ctx.TotalSize = totalSize
-	ctx.mu.Unlock()
+	ctx.Mu.Unlock()
 
 	log.Info("transfers").
 		Int64("transfer_id", transfer.ID).
@@ -405,9 +405,9 @@ func (p *TransferProcessor) queueTransferFiles(transfer *putio.Transfer, files [
 			}
 
 			// For existing files, add their size to the downloaded size
-			ctx.mu.Lock()
+			ctx.Mu.Lock()
 			ctx.DownloadedSize += file.Size
-			ctx.mu.Unlock()
+			ctx.Mu.Unlock()
 
 			log.Debug("transfers").
 				Int64("transfer_id", transfer.ID).
@@ -565,10 +565,10 @@ func (p *TransferProcessor) finalizeCompletedTransfers() {
 		ctx := value.(*TransferContext)
 
 		// Check if this transfer is in Completed state but hasn't been cleaned up
-		ctx.mu.RLock()
+		ctx.Mu.RLock()
 		isCompletedPending := ctx.State == TransferLifecycleCompleted
 		name := ctx.Name
-		ctx.mu.RUnlock()
+		ctx.Mu.RUnlock()
 
 		if isCompletedPending {
 			log.Info("transfers").

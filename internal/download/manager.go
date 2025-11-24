@@ -241,11 +241,11 @@ func (m *Manager) handleFileCompletion(transferID int64, fileID int64) {
 	}
 
 	// Get transfer state under lock
-	ctx.mu.RLock()
+	ctx.Mu.RLock()
 	isCompleted := ctx.State == TransferLifecycleCompleted
 	totalFiles := ctx.TotalFiles
 	completedFiles := ctx.CompletedFiles
-	ctx.mu.RUnlock()
+	ctx.Mu.RUnlock()
 
 	// Log transfer state
 	log.Debug("transfers").

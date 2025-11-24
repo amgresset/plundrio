@@ -55,8 +55,8 @@ func (tc *TransferCoordinator) StartDownload(transferID int64) error {
 		return NewTransferNotFoundError(transferID)
 	}
 
-	ctx.mu.Lock()
-	defer ctx.mu.Unlock()
+	ctx.Mu.Lock()
+	defer ctx.Mu.Unlock()
 
 	if ctx.State != TransferLifecycleInitial {
 		return fmt.Errorf("invalid state transition: %s -> Downloading", ctx.State)
@@ -82,8 +82,8 @@ func (tc *TransferCoordinator) FileCompleted(transferID int64) error {
 		return nil
 	}
 
-	ctx.mu.Lock()
-	defer ctx.mu.Unlock()
+	ctx.Mu.Lock()
+	defer ctx.Mu.Unlock()
 
 	// If transfer is already completed, just return
 	if ctx.State == TransferLifecycleCompleted {
@@ -162,8 +162,8 @@ func (tc *TransferCoordinator) FileFailure(transferID int64) error {
 		return nil
 	}
 
-	ctx.mu.Lock()
-	defer ctx.mu.Unlock()
+	ctx.Mu.Lock()
+	defer ctx.Mu.Unlock()
 
 	// If transfer is already completed, just return
 	if ctx.State == TransferLifecycleCompleted {
@@ -208,8 +208,8 @@ func (tc *TransferCoordinator) CompleteTransfer(transferID int64) error {
 		return NewTransferNotFoundError(transferID)
 	}
 
-	ctx.mu.Lock()
-	defer ctx.mu.Unlock()
+	ctx.Mu.Lock()
+	defer ctx.Mu.Unlock()
 
 	// Allow completion from both Downloading and Completed states
 	// This handles both:
@@ -271,8 +271,8 @@ func (tc *TransferCoordinator) FailTransfer(transferID int64, err error) error {
 		return NewTransferNotFoundError(transferID)
 	}
 
-	ctx.mu.Lock()
-	defer ctx.mu.Unlock()
+	ctx.Mu.Lock()
+	defer ctx.Mu.Unlock()
 
 	// Check if this is a cancellation
 	if downloadErr, ok := err.(*DownloadError); ok && downloadErr.Type == "DownloadCancelled" {
@@ -323,4 +323,13 @@ func (tc *TransferCoordinator) GetTransferContext(transferID int64) (*TransferCo
 		Msg("Currently tracked transfers")
 
 	return nil, false
+}
+
+// GetAllTransfers iterates over all active transfers
+func (tc *TransferCoordinator) GetAllTransfers(fn func(*TransferContext)) {
+	tc.transfers.Range(func(key, value interface{}) bool {
+		ctx := value.(*TransferContext)
+		fn(ctx)
+		return true
+	})
 }

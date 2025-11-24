@@ -38,7 +38,9 @@ func New(cfg *config.Config, client *api.Client, dlManager *download.Manager) *S
 func (s *Server) Start() error {
 	// Initialize server first
 	mux := http.NewServeMux()
+	mux.HandleFunc("/api/downloads", s.handleDashboardAPI)
 	mux.HandleFunc("/transmission/rpc", s.handleRPC)
+	mux.HandleFunc("/", s.handleDashboard)
 
 	s.srv = &http.Server{
 		Addr:    s.cfg.ListenAddr,

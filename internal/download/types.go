@@ -72,5 +72,5 @@ type TransferContext struct {
 	DownloadedSize int64 // Total downloaded bytes
 	State          TransferLifecycleState
 	Error          error
-	mu             sync.RWMutex
+	Mu             sync.RWMutex
 }

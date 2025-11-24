@@ -1,14 +1,18 @@
 package download
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
-	grab "github.com/cavaliergopher/grab/v3"
 	"github.com/elsbrock/plundrio/internal/log"
 )
 
@@ -121,20 +125,7 @@ func isTransientError(err error) bool {
 	return false
 }
 
-// configureGrabRequest configures a grab request with appropriate options
-func (m *Manager) configureGrabRequest(req *grab.Request) {
-	// Set request headers
-	req.HTTPRequest.Header.Set("User-Agent", "plundrio/1.0")
-	req.HTTPRequest.Header.Set("Accept", "*/*")
-	req.HTTPRequest.Header.Set("Connection", "keep-alive")
-
-	// Configure request options
-	req.NoCreateDirectories = false // Allow grab to create directories
-	req.SkipExisting = false        // Don't skip existing files
-	req.NoResume = false            // Allow resuming downloads
-}
-
-// downloadFile downloads a file from Put.io to the target directory using grab
+// downloadFile downloads a file from Put.io using aria2c for multi-connection downloads
 func (m *Manager) downloadFile(state *DownloadState) error {
 	// Create a context that's cancelled when stopChan is closed
 	ctx, cancel := context.WithCancel(context.Background())
@@ -158,104 +149,191 @@ func (m *Manager) downloadFile(state *DownloadState) error {
 
 	// Prepare target path
 	targetPath := filepath.Join(m.cfg.TargetDir, state.Name)
-	if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+	targetDir := filepath.Dir(targetPath)
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
 
-	// Create grab client with our configuration
-	client := grab.NewClient()
-
-	// Create grab request
-	req, err := grab.NewRequest(targetPath, url)
-	if err != nil {
-		return fmt.Errorf("failed to create download request: %w", err)
+	// Check if file exists from previous non-aria2c download
+	// If it does and there's no .aria2 control file, remove it
+	if _, err := os.Stat(targetPath); err == nil {
+		aria2ControlFile := targetPath + ".aria2"
+		if _, err := os.Stat(aria2ControlFile); os.IsNotExist(err) {
+			// File exists but not from aria2c, remove it so aria2c can start fresh
+			log.Info("download").
+				Str("file_name", state.Name).
+				Msg("Removing existing partial download from previous session")
+			if err := os.Remove(targetPath); err != nil {
+				log.Warn("download").
+					Str("file_name", state.Name).
+					Err(err).
+					Msg("Failed to remove existing file, continuing anyway")
+			}
+		}
 	}
 
-	// Set request context for cancellation
-	req = req.WithContext(ctx)
+	// aria2c arguments for maximum speed
+	args := []string{
+		"-x", "16", // 16 connections per server
+		"-s", "16", // Split file into 16 segments
+		"-k", "1M", // Min split size 1MB
+		"--max-tries=5",
+		"--retry-wait=3",
+		"--connect-timeout=30",
+		"--timeout=60",
+		"--allow-overwrite=true",
+		"--auto-file-renaming=false",
+		"--continue=true", // Resume support
+		"--summary-interval=0", // Disable summary to reduce output
+		"--console-log-level=notice", // Reduce console spam
+		"-d", targetDir,
+		"-o", filepath.Base(targetPath),
+		url,
+	}
 
-	// Set request headers
-	req.HTTPRequest.Header.Set("User-Agent", "plundrio/1.0")
-	req.HTTPRequest.Header.Set("Accept", "*/*")
-	req.HTTPRequest.Header.Set("Connection", "keep-alive")
-
-	// Start the download
 	log.Info("download").
 		Str("file_name", state.Name).
 		Str("target_path", targetPath).
-		Msg("Starting download with grab")
+		Msg("Starting download with aria2c (16 connections)")
 
-	// Execute the request
-	resp := client.Do(req)
+	// Create aria2c command
+	cmd := exec.CommandContext(ctx, "aria2c", args...)
 
-	// Set up progress tracking
-	done := make(chan struct{})
-	progressTicker := time.NewTicker(m.dlConfig.ProgressUpdateInterval)
-	defer progressTicker.Stop()
-
-	// Initialize state
-	state.mu.Lock()
-	state.downloaded = 0
-	state.Progress = 0
-	state.LastProgress = time.Now()
-	state.mu.Unlock()
-
-	// Configure the request
-	m.configureGrabRequest(req)
-
-	// Monitor download progress
-	go m.monitorGrabDownloadProgress(ctx, state, resp, done, progressTicker)
-
-	// Wait for completion or cancellation
-	select {
-	case <-resp.Done:
-		close(done)
-		// Check for errors
-		if err := resp.Err(); err != nil {
-			if ctx.Err() != nil {
-				return NewDownloadCancelledError(state.Name, "download stopped")
-			}
-			return fmt.Errorf("download failed: %w", err)
-		}
-
-		// Verify file completeness
-		if !resp.IsComplete() {
-			return fmt.Errorf("download incomplete: %s", state.Name)
-		}
-
-		// Log completion
-		elapsed := time.Since(state.StartTime).Seconds()
-		totalSize := resp.Size()
-		averageSpeedMBps := (float64(totalSize) / 1024 / 1024) / elapsed
-
-		// Update transfer context with the completed file size
-		if transferCtx, exists := m.coordinator.GetTransferContext(state.TransferID); exists {
-			// Update downloaded size
-			transferCtx.DownloadedSize += totalSize
-
-			log.Debug("download").
-				Str("file_name", state.Name).
-				Int64("transfer_id", state.TransferID).
-				Int64("file_size", totalSize).
-				Int64("transfer_downloaded", transferCtx.DownloadedSize).
-				Int64("transfer_total", transferCtx.TotalSize).
-				Msg("Updated transfer with completed file size")
-		}
-
-		log.Info("download").
-			Str("file_name", state.Name).
-			Float64("size_mb", float64(totalSize)/1024/1024).
-			Float64("speed_mbps", averageSpeedMBps).
-			Dur("duration", time.Since(state.StartTime)).
-			Str("target_path", targetPath).
-			Msg("Download completed")
-
-		return nil
-
-	case <-ctx.Done():
-		close(done)
-		return NewDownloadCancelledError(state.Name, "context cancelled")
+	// Get stdout pipe for progress tracking
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("failed to create stdout pipe: %w", err)
 	}
+
+	// Get stderr pipe
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("failed to create stderr pipe: %w", err)
+	}
+
+	// Start the command
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start aria2c: %w", err)
+	}
+
+	// Monitor progress in goroutine
+	progressDone := make(chan struct{})
+	go m.monitorAria2cProgress(ctx, state, stdout, stderr, progressDone)
+
+	// Wait for command to complete
+	cmdErr := cmd.Wait()
+
+	// Signal progress monitor to stop
+	close(progressDone)
+
+	// Check for cancellation
+	if ctx.Err() != nil {
+		return NewDownloadCancelledError(state.Name, "download stopped")
+	}
+
+	// Check for command errors
+	if cmdErr != nil {
+		return fmt.Errorf("aria2c failed: %w", cmdErr)
+	}
+
+	// Verify file exists and get size
+	fileInfo, err := os.Stat(targetPath)
+	if err != nil {
+		return fmt.Errorf("failed to verify downloaded file: %w", err)
+	}
+
+	totalSize := fileInfo.Size()
+	elapsed := time.Since(state.StartTime).Seconds()
+	averageSpeedMBps := (float64(totalSize) / 1024 / 1024) / elapsed
+
+	// Update transfer context with the completed file size
+	if transferCtx, exists := m.coordinator.GetTransferContext(state.TransferID); exists {
+		transferCtx.DownloadedSize += totalSize
+
+		log.Debug("download").
+			Str("file_name", state.Name).
+			Int64("transfer_id", state.TransferID).
+			Int64("file_size", totalSize).
+			Int64("transfer_downloaded", transferCtx.DownloadedSize).
+			Int64("transfer_total", transferCtx.TotalSize).
+			Msg("Updated transfer with completed file size")
+	}
+
+	log.Info("download").
+		Str("file_name", state.Name).
+		Float64("size_mb", float64(totalSize)/1024/1024).
+		Float64("speed_mbps", averageSpeedMBps).
+		Dur("duration", time.Since(state.StartTime)).
+		Str("target_path", targetPath).
+		Msg("Download completed with aria2c")
+
+	return nil
 }
 
-// No longer needed with grab library
+// monitorAria2cProgress monitors aria2c output for progress updates
+func (m *Manager) monitorAria2cProgress(ctx context.Context, state *DownloadState, stdout, stderr io.ReadCloser, done chan struct{}) {
+	// Regex to parse aria2c progress output
+	// Example: [#1 SIZE:1.2GiB/10.5GiB(11%) CN:16 DL:45.2MiB ETA:3m12s]
+	progressRegex := regexp.MustCompile(`\[#\d+.*?(\d+)%.*?DL:([\d.]+)(KiB|MiB|GiB).*?ETA:([^\]]+)\]`)
+
+	scanner := bufio.NewScanner(io.MultiReader(stdout, stderr))
+	lastProgress := float64(0)
+	lastLogTime := time.Now()
+
+	for {
+		select {
+		case <-done:
+			return
+		case <-ctx.Done():
+			return
+		default:
+			if scanner.Scan() {
+				line := scanner.Text()
+
+				// Parse progress line
+				matches := progressRegex.FindStringSubmatch(line)
+				if len(matches) >= 5 {
+					progress, _ := strconv.ParseFloat(matches[1], 64)
+					speed, _ := strconv.ParseFloat(matches[2], 64)
+					speedUnit := matches[3]
+					eta := matches[4]
+
+					// Convert speed to MB/s
+					speedMBps := speed
+					switch speedUnit {
+					case "KiB":
+						speedMBps = speed / 1024
+					case "GiB":
+						speedMBps = speed * 1024
+					}
+
+					// Update state
+					state.mu.Lock()
+					state.Progress = progress
+					state.downloaded = int64(progress) // Approximate
+					state.LastProgress = time.Now()
+					state.mu.Unlock()
+
+					// Log progress every 5 seconds
+					if time.Since(lastLogTime) >= m.dlConfig.ProgressUpdateInterval && progress != lastProgress {
+						log.Info("download").
+							Str("file_name", state.Name).
+							Float64("progress_percent", progress).
+							Float64("speed_mbps", speedMBps).
+							Str("eta", eta).
+							Msg("Download progress")
+
+						lastProgress = progress
+						lastLogTime = time.Now()
+					}
+				} else if strings.Contains(line, "Exception") || strings.Contains(line, "error") || strings.Contains(line, "ERROR") || strings.Contains(line, "failed") {
+					// Log aria2c error messages
+					log.Error("download").
+						Str("file_name", state.Name).
+						Str("aria2c_output", line).
+						Msg("aria2c error output")
+				}
+			}
+		}
+	}
+}
