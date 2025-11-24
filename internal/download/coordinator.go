@@ -310,3 +310,12 @@ func (tc *TransferCoordinator) GetTransferContext(transferID int64) (*TransferCo
 
 	return nil, false
 }
+
+// GetAllTransfers iterates over all active transfers
+func (tc *TransferCoordinator) GetAllTransfers(fn func(*TransferContext)) {
+	tc.transfers.Range(func(key, value interface{}) bool {
+		ctx := value.(*TransferContext)
+		fn(ctx)
+		return true
+	})
+}

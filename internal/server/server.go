@@ -28,6 +28,7 @@ type PutioClient interface {
 type DownloadService interface {
 	GetTransfers() []*putio.Transfer
 	GetTransferContext(transferID int64) (*download.TransferContext, bool)
+	GetAllTransfers(fn func(*download.TransferContext))
 	SetCategory(hash, category string)
 	GetCategory(hash string) string
 	RemoveCategory(hash string)
@@ -60,7 +61,9 @@ func New(cfg *config.Config, client PutioClient, dlService DownloadService) *Ser
 func (s *Server) Start() error {
 	// Initialize server first
 	mux := http.NewServeMux()
+	mux.HandleFunc("/api/downloads", s.handleDashboardAPI)
 	mux.HandleFunc("/transmission/rpc", s.handleRPC)
+	mux.HandleFunc("/", s.handleDashboard)
 
 	s.srv = &http.Server{
 		Addr:    s.cfg.ListenAddr,

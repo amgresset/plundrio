@@ -70,6 +70,11 @@ func (m *Manager) GetTransferContext(transferID int64) (*TransferContext, bool) 
 	return m.coordinator.GetTransferContext(transferID)
 }
 
+// GetAllTransfers invokes fn for every tracked transfer (used by the dashboard).
+func (m *Manager) GetAllTransfers(fn func(*TransferContext)) {
+	m.coordinator.GetAllTransfers(fn)
+}
+
 // SetCategory stores a category for a transfer hash.
 func (m *Manager) SetCategory(hash, category string) {
 	m.categories.Set(hash, category)

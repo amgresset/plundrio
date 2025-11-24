@@ -5,7 +5,6 @@ go 1.25.0
 toolchain go1.26.4
 
 require (
-	github.com/cavaliergopher/grab/v3 v3.0.1
 	github.com/elsbrock/go-putio v0.0.0-20250302151657-26b9b34a0424
 	github.com/rs/zerolog v1.35.1
 	github.com/spf13/cobra v1.10.2
