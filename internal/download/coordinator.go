@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/elsbrock/go-putio"
 	"github.com/elsbrock/plundrio/internal/log"
 )
 
@@ -30,13 +31,14 @@ func (tc *TransferCoordinator) RegisterCleanupHook(hook func(int64) error) {
 }
 
 // InitiateTransfer starts tracking a new transfer
-func (tc *TransferCoordinator) InitiateTransfer(id int64, name string, fileID int64, totalFiles int) *TransferContext {
+func (tc *TransferCoordinator) InitiateTransfer(id int64, name string, fileID int64, totalFiles int, transfer *putio.Transfer) *TransferContext {
 	ctx := &TransferContext{
 		ID:         id,
 		Name:       name,
 		FileID:     fileID,
 		TotalFiles: int32(totalFiles),
 		State:      TransferLifecycleInitial,
+		Transfer:   transfer,
 	}
 	tc.transfers.Store(id, ctx)
 
@@ -256,8 +258,8 @@ func (tc *TransferCoordinator) CompleteTransfer(transferID int64) error {
 	// Mark the transfer as processed instead of removing it
 	ctx.State = TransferLifecycleProcessed
 
-	// Mark the transfer as processed in the processor
-	tc.manager.GetTransferProcessor().MarkTransferProcessed(transferID)
+	// Mark the transfer as processed in the processor, passing the original transfer for RPC visibility
+	tc.manager.GetTransferProcessor().MarkTransferProcessed(transferID, ctx.Transfer)
 
 	log.Info("transfer").
 		Int64("id", transferID).

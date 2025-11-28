@@ -12,7 +12,19 @@ import (
 )
 
 // findTransferByHash finds a transfer by its hash string
+// It searches both active Put.io transfers and locally processed transfers
 func (s *Server) findTransferByHash(hash string) (*putio.Transfer, error) {
+	// First check the processor's tracked transfers (includes processed ones)
+	processor := s.dlManager.GetTransferProcessor()
+	if processor != nil {
+		for _, t := range processor.GetTransfers() {
+			if t.Hash == hash {
+				return t, nil
+			}
+		}
+	}
+
+	// Fall back to direct Put.io API lookup
 	transfers, err := s.client.GetTransfers()
 	if err != nil {
 		return nil, err
@@ -386,6 +398,12 @@ func (s *Server) handleTorrentRemove(args json.RawMessage) (interface{}, error) 
 				Int64("transfer_id", transfer.ID).
 				Bool("delete_local_data", params.DeleteLocalData).
 				Msg("Transfer removed")
+		}
+
+		// Remove from processed transfers list so it stops showing in RPC
+		processor := s.dlManager.GetTransferProcessor()
+		if processor != nil {
+			processor.RemoveProcessedTransfer(transfer.ID)
 		}
 	}
 

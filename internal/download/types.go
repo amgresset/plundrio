@@ -3,6 +3,8 @@ package download
 import (
 	"sync"
 	"time"
+
+	"github.com/elsbrock/go-putio"
 )
 
 // downloadJob represents a single download task
@@ -74,4 +76,5 @@ type TransferContext struct {
 	State          TransferLifecycleState
 	Error          error
 	Mu             sync.RWMutex
+	Transfer       *putio.Transfer // Original transfer for RPC visibility after processing
 }

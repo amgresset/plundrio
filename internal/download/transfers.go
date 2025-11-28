@@ -20,16 +20,38 @@ type TransferProcessor struct {
 	targetDir          string
 }
 
-// GetTransfers returns a copy of all transfers for a given folder ID
+// GetTransfers returns a copy of all transfers for a given folder ID, including processed ones
 func (p *TransferProcessor) GetTransfers() []*putio.Transfer {
 	var allTransfers []*putio.Transfer
+
+	// Track IDs already added from active transfers to avoid duplicates
+	addedIDs := make(map[int64]bool)
+
+	// Add active transfers from Put.io API
 	for _, transfers := range p.transfers {
 		for _, t := range transfers {
 			if t.SaveParentID == p.folderID {
 				allTransfers = append(allTransfers, t)
+				addedIDs[t.ID] = true
 			}
 		}
 	}
+
+	// Add processed transfers (locally completed, waiting for torrent-remove)
+	p.processedTransfers.Range(func(key, value interface{}) bool {
+		transferID := key.(int64)
+		// Skip if already added from active transfers
+		if addedIDs[transferID] {
+			return true
+		}
+		transfer := value.(*putio.Transfer)
+		// Mark as COMPLETED so RPC shows 100%
+		transfer.Status = "COMPLETED"
+		transfer.PercentDone = 100
+		allTransfers = append(allTransfers, transfer)
+		return true
+	})
+
 	return allTransfers
 }
 
@@ -461,7 +483,7 @@ func (p *TransferProcessor) queueFileDownload(transfer *putio.Transfer, file *pu
 
 // initializeTransfer sets up transfer tracking
 func (p *TransferProcessor) initializeTransfer(transfer *putio.Transfer, filesToDownload int) bool {
-	p.manager.coordinator.InitiateTransfer(transfer.ID, transfer.Name, transfer.FileID, filesToDownload)
+	p.manager.coordinator.InitiateTransfer(transfer.ID, transfer.Name, transfer.FileID, filesToDownload, transfer)
 	if err := p.manager.coordinator.StartDownload(transfer.ID); err != nil {
 		log.Error("transfers").
 			Str("name", transfer.Name).
@@ -546,12 +568,28 @@ func (p *TransferProcessor) processErroredTransfers() {
 	}
 }
 
-// MarkTransferProcessed marks a transfer as processed locally
-func (p *TransferProcessor) MarkTransferProcessed(transferID int64) {
-	p.processedTransfers.Store(transferID, true)
-	log.Debug("transfers").
-		Int64("transfer_id", transferID).
-		Msg("Marked transfer as processed locally")
+// MarkTransferProcessed marks a transfer as processed locally and stores it for RPC visibility
+func (p *TransferProcessor) MarkTransferProcessed(transferID int64, transfer *putio.Transfer) {
+	if transfer != nil {
+		p.processedTransfers.Store(transferID, transfer)
+		log.Info("transfers").
+			Int64("transfer_id", transferID).
+			Str("name", transfer.Name).
+			Msg("Stored processed transfer for RPC visibility")
+	} else {
+		log.Warn("transfers").
+			Int64("transfer_id", transferID).
+			Msg("Cannot store processed transfer: transfer is nil")
+	}
+}
+
+// RemoveProcessedTransfer removes a transfer from the processed list (called when torrent-remove is received)
+func (p *TransferProcessor) RemoveProcessedTransfer(transferID int64) {
+	if _, existed := p.processedTransfers.LoadAndDelete(transferID); existed {
+		log.Info("transfers").
+			Int64("transfer_id", transferID).
+			Msg("Removed processed transfer from RPC tracking")
+	}
 }
 
 // finalizeCompletedTransfers checks for transfers that are marked as completed in the
