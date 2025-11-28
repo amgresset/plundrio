@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/elsbrock/go-putio"
@@ -340,14 +341,35 @@ func (s *Server) handleTorrentRemove(args json.RawMessage) (interface{}, error) 
 			continue
 		}
 
-		// Delete the files of the transfer
+		// Delete local files if requested
+		if params.DeleteLocalData {
+			localPath := s.cfg.TargetDir + "/" + transfer.Name
+			if err := os.RemoveAll(localPath); err != nil {
+				log.Error("rpc").
+					Str("operation", "torrent-remove").
+					Str("hash", hash).
+					Int64("transfer_id", transfer.ID).
+					Str("local_path", localPath).
+					Err(err).
+					Msg("Failed to delete local files")
+			} else {
+				log.Info("rpc").
+					Str("operation", "torrent-remove").
+					Str("hash", hash).
+					Int64("transfer_id", transfer.ID).
+					Str("local_path", localPath).
+					Msg("Deleted local files")
+			}
+		}
+
+		// Delete the files of the transfer from Put.io
 		if err := s.client.DeleteFile(transfer.FileID); err != nil {
 			log.Error("rpc").
 				Str("operation", "torrent-remove").
 				Str("hash", hash).
 				Int64("transfer_id", transfer.ID).
 				Err(err).
-				Msg("Failed to delete transfer files")
+				Msg("Failed to delete transfer files from Put.io")
 		}
 
 		if err := s.client.DeleteTransfer(transfer.ID); err != nil {
