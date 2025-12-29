@@ -71,9 +71,10 @@ func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request) {
 		err    error
 	)
 
-	log.Debug("rpc").
+	log.Info("rpc").
 		Str("client_addr", r.RemoteAddr).
 		Str("rpc_method", req.Method).
+		RawJSON("arguments", req.Arguments).
 		Msg("Processing RPC method")
 
 	switch req.Method {

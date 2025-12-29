@@ -273,6 +273,9 @@ func (s *Server) handleTorrentGet(args json.RawMessage) (interface{}, error) {
 				Msg("Calculated progress for transfer without context")
 		}
 
+		// Determine if the torrent is finished (for *arr removal logic)
+		isFinished := status == 6 && percentDone >= 1.0
+
 		torrentInfo := map[string]interface{}{
 			"id":             t.ID,
 			"hashString":     t.Hash,
@@ -293,8 +296,20 @@ func (s *Server) handleTorrentGet(args json.RawMessage) (interface{}, error) {
 				}
 				return 0
 			}(),
-			"error":       t.ErrorMessage != "",
-			"errorString": t.ErrorMessage,
+			"error":         t.ErrorMessage != "",
+			"errorString":   t.ErrorMessage,
+			"isFinished":     isFinished,
+			"doneDate": func() int64 {
+				if t.FinishedAt == nil || t.FinishedAt.IsZero() {
+					return 0
+				}
+				return t.FinishedAt.Unix()
+			}(),
+			"seedRatioLimit": 0,                                      // Ratio of 0 = already met
+			"seedRatioMode":  1,                                      // 1 = per-torrent limit (use seedRatioLimit)
+			"secondsSeeding": int64(t.SecondsSeeding),                // How long it's been seeding
+			"seedIdleLimit":  1,                                      // 1 minute idle limit
+			"seedIdleMode":   1,                                      // 1 = per-torrent limit
 		}
 
 		torrents = append(torrents, torrentInfo)
