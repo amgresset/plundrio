@@ -229,6 +229,14 @@ func (s *Server) handleTorrentGet(_ context.Context, args json.RawMessage) (inte
 			"percentDone":    percentDone,
 			"rateDownload":   rateDownload,
 			"rateUpload":     t.UploadSpeed,
+			// We download over HTTP (aria2c) and never seed, so the seed goal is
+			// always satisfied. *arr's Transmission client only removes a
+			// completed download once HasReachedSeedLimit() is true, which needs a
+			// per-torrent seed ratio (mode 1) whose limit (0) is already met.
+			// Without these a stopped/finished transfer is never removed, leaving
+			// the local copy in the download dir after import.
+			"seedRatioMode":  1,
+			"seedRatioLimit": 0,
 			"uploadRatio": func() float64 {
 				if t.Size > 0 {
 					return float64(t.Uploaded) / float64(t.Size)
