@@ -136,7 +136,7 @@ func TestCalculateProgress(t *testing.T) {
 				TransferCtx:      newTestTransferCtx(download.TransferLifecycleProcessed, 3, 3, 1000, 1000),
 			},
 			wantPercentDone:   1.0,
-			wantStatus:        trStatusSeed,
+			wantStatus:        trStatusStopped,
 			wantLeftUntilDone: 0,
 		},
 		// ---------------------------------------------------------------

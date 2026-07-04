@@ -103,9 +103,14 @@ func calculateProgressWithContext(in progressInput) progressResult {
 	var status int
 	switch state {
 	case download.TransferLifecycleProcessed:
+		// We download from put.io over HTTP (aria2c) and never seed back, so a
+		// fully-processed transfer is finished — not seeding. Reporting it as
+		// seeding made *arr wait for a seed goal that is never met and skip the
+		// torrent-remove, leaving the local copy in /downloads. Report it as
+		// stopped+complete so *arr removes the local copy after import.
 		percentDone = 1.0
 		leftUntilDone = 0
-		status = trStatusSeed
+		status = trStatusStopped
 	case download.TransferLifecycleCompleted:
 		status = mapPutioStatusValue(in.PutioStatus)
 	default:
