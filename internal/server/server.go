@@ -29,6 +29,8 @@ type DownloadService interface {
 	GetTransfers() []*putio.Transfer
 	GetTransferContext(transferID int64) (*download.TransferContext, bool)
 	GetAllTransfers(fn func(*download.TransferContext))
+	FindTransferContextByHash(hash string) (*download.TransferContext, bool)
+	RemoveTransferContext(transferID int64)
 	SetCategory(hash, category string)
 	GetCategory(hash string) string
 	RemoveCategory(hash string)

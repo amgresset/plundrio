@@ -38,7 +38,7 @@ func TestCoordinatorHappyPath(t *testing.T) {
 	tc := m.coordinator
 
 	// Initiate a transfer with 3 files
-	ctx := tc.InitiateTransfer(1, "test-transfer", 100, 3)
+	ctx := tc.InitiateTransfer(1, "test-transfer", "hash", 100, 3)
 	if ctx.GetState() != TransferLifecycleInitial {
 		t.Fatalf("expected Initial state, got %s", ctx.GetState())
 	}
@@ -81,7 +81,7 @@ func TestCoordinatorStartDownloadFromNonInitialState(t *testing.T) {
 	m := newTestManager()
 	tc := m.coordinator
 
-	tc.InitiateTransfer(1, "test", 100, 1)
+	tc.InitiateTransfer(1, "test", "hash", 100, 1)
 
 	// Move to Downloading first
 	if err := tc.StartDownload(1); err != nil {
@@ -99,7 +99,7 @@ func TestCoordinatorFileCompletedIdempotent(t *testing.T) {
 	m := newTestManager()
 	tc := m.coordinator
 
-	ctx := tc.InitiateTransfer(1, "test", 100, 1)
+	ctx := tc.InitiateTransfer(1, "test", "hash", 100, 1)
 
 	if err := tc.StartDownload(1); err != nil {
 		t.Fatalf("StartDownload failed: %v", err)
@@ -139,7 +139,7 @@ func TestCoordinatorFileFailureMarksStateFailed(t *testing.T) {
 	m := newTestManager()
 	tc := m.coordinator
 
-	ctx := tc.InitiateTransfer(1, "test", 100, 2)
+	ctx := tc.InitiateTransfer(1, "test", "hash", 100, 2)
 
 	if err := tc.StartDownload(1); err != nil {
 		t.Fatalf("StartDownload failed: %v", err)
@@ -164,7 +164,7 @@ func TestCoordinatorMixedCompletionsAndFailures(t *testing.T) {
 	tc := m.coordinator
 
 	// 3 files total: 2 succeed, 1 fails
-	ctx := tc.InitiateTransfer(1, "test", 100, 3)
+	ctx := tc.InitiateTransfer(1, "test", "hash", 100, 3)
 
 	if err := tc.StartDownload(1); err != nil {
 		t.Fatalf("StartDownload failed: %v", err)
@@ -200,7 +200,7 @@ func TestCoordinatorCompleteTransferWithPendingFiles(t *testing.T) {
 	m := newTestManager()
 	tc := m.coordinator
 
-	tc.InitiateTransfer(1, "test", 100, 3)
+	tc.InitiateTransfer(1, "test", "hash", 100, 3)
 
 	if err := tc.StartDownload(1); err != nil {
 		t.Fatalf("StartDownload failed: %v", err)
@@ -239,7 +239,7 @@ func TestCoordinatorCompleteTransferRunsCleanupHooks(t *testing.T) {
 		return nil
 	})
 
-	tc.InitiateTransfer(1, "test", 100, 1)
+	tc.InitiateTransfer(1, "test", "hash", 100, 1)
 	if err := tc.StartDownload(1); err != nil {
 		t.Fatalf("StartDownload failed: %v", err)
 	}
@@ -271,7 +271,7 @@ func TestCoordinatorCleanupHookErrorDoesNotBlockCompletion(t *testing.T) {
 		return errors.New("hook failed")
 	})
 
-	ctx := tc.InitiateTransfer(1, "test", 100, 1)
+	ctx := tc.InitiateTransfer(1, "test", "hash", 100, 1)
 	if err := tc.StartDownload(1); err != nil {
 		t.Fatalf("StartDownload failed: %v", err)
 	}
@@ -292,7 +292,7 @@ func TestCoordinatorFailTransferWithCancelledError(t *testing.T) {
 	m := newTestManager()
 	tc := m.coordinator
 
-	ctx := tc.InitiateTransfer(1, "test", 100, 1)
+	ctx := tc.InitiateTransfer(1, "test", "hash", 100, 1)
 
 	cancelErr := NewDownloadCancelledError("file.mkv", "user requested")
 	if err := tc.FailTransfer(1, cancelErr); err != nil {
@@ -311,7 +311,7 @@ func TestCoordinatorFailTransferWithRegularError(t *testing.T) {
 	m := newTestManager()
 	tc := m.coordinator
 
-	ctx := tc.InitiateTransfer(1, "test", 100, 1)
+	ctx := tc.InitiateTransfer(1, "test", "hash", 100, 1)
 
 	regularErr := errors.New("network timeout")
 	if err := tc.FailTransfer(1, regularErr); err != nil {
@@ -356,7 +356,7 @@ func TestCoordinatorCompleteTransferFromProcessedStateErrors(t *testing.T) {
 	m := newTestManager()
 	tc := m.coordinator
 
-	ctx := tc.InitiateTransfer(1, "test", 100, 1)
+	ctx := tc.InitiateTransfer(1, "test", "hash", 100, 1)
 	if err := tc.StartDownload(1); err != nil {
 		t.Fatalf("StartDownload failed: %v", err)
 	}

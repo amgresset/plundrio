@@ -147,12 +147,19 @@ func (s *Server) handleTorrentGet(_ context.Context, args json.RawMessage) (inte
 		Interface("fields", params.Fields).
 		Msg("Processing torrent-get request")
 
-	transfers := s.dlService.GetTransfers()
-	if transfers == nil {
-		return map[string]interface{}{
-			"torrents": []map[string]interface{}{},
-		}, nil
+	wanted := func(hash string) bool {
+		if len(params.IDs) == 0 {
+			return true
+		}
+		for _, id := range params.IDs {
+			if strings.EqualFold(id, hash) {
+				return true
+			}
+		}
+		return false
 	}
+
+	transfers := s.dlService.GetTransfers()
 
 	log.Debug("rpc").
 		Str("operation", "torrent-get").
@@ -161,19 +168,11 @@ func (s *Server) handleTorrentGet(_ context.Context, args json.RawMessage) (inte
 
 	// Convert Put.io transfers to transmission format
 	torrents := make([]map[string]interface{}, 0, len(transfers))
+	listed := make(map[int64]bool, len(transfers))
 	for _, t := range transfers {
-		// Filter by IDs if specified
-		if len(params.IDs) > 0 {
-			found := false
-			for _, id := range params.IDs {
-				if id == t.Hash {
-					found = true
-					break
-				}
-			}
-			if !found {
-				continue
-			}
+		listed[t.ID] = true
+		if !wanted(t.Hash) {
+			continue
 		}
 
 		// Look up transfer context if available
@@ -182,84 +181,24 @@ func (s *Server) handleTorrentGet(_ context.Context, args json.RawMessage) (inte
 			transferCtx = ctx
 		}
 
-		// Calculate combined progress
-		prog := calculateProgress(progressInput{
-			PutioPercentDone: t.PercentDone,
-			PutioStatus:      t.Status,
-			PutioSize:        t.Size,
-			TransferCtx:      transferCtx,
-		})
-
-		percentDone := prog.PercentDone
-		status := prog.Status
-		leftUntilDone := prog.LeftUntilDone
-		eta := t.EstimatedTime
-		rateDownload := t.DownloadSpeed
-
-		// Override ETA and rate with local values when available
-		if !prog.LocalETA.IsZero() {
-			if secsUntil := int64(time.Until(prog.LocalETA).Seconds()); secsUntil > 0 {
-				eta = secsUntil
-			}
-			if prog.LocalSpeed > 0 {
-				rateDownload = int(prog.LocalSpeed)
-			}
-		}
-
-		log.Debug("rpc").
-			Str("operation", "torrent-get").
-			Int64("id", t.ID).
-			Str("name", t.Name).
-			Float64("percent_done", percentDone*100).
-			Int64("left_until_done", leftUntilDone).
-			Int("status", status).
-			Msg("Calculated progress")
-
-		torrentInfo := map[string]interface{}{
-			"id":             t.ID,
-			"hashString":     t.Hash,
-			"name":           t.Name,
-			"eta":            eta,
-			"status":         status,
-			"downloadDir":    filepath.Join(s.cfg.TargetDir, s.dlService.GetCategory(t.Hash)),
-			"totalSize":      t.Size,
-			"leftUntilDone":  leftUntilDone,
-			"uploadedEver":   t.Uploaded,
-			"downloadedEver": t.Downloaded,
-			"percentDone":    percentDone,
-			"rateDownload":   rateDownload,
-			"rateUpload":     t.UploadSpeed,
-			// We download over HTTP (aria2c) and never seed, so the seed goal is
-			// always satisfied. *arr's Transmission client only removes a
-			// completed download once HasReachedSeedLimit() is true, which needs a
-			// per-torrent seed ratio (mode 1) whose limit (0) is already met.
-			// Without these a stopped/finished transfer is never removed, leaving
-			// the local copy in the download dir after import.
-			"seedRatioMode":  1,
-			"seedRatioLimit": 0,
-			"uploadRatio": func() float64 {
-				if t.Size > 0 {
-					return float64(t.Uploaded) / float64(t.Size)
-				}
-				return 0
-			}(),
-			"error":       t.ErrorMessage != "",
-			"errorString": t.ErrorMessage,
-		}
-
-		torrents = append(torrents, torrentInfo)
-
-		// Log each torrent being added to the response
-		log.Debug("rpc").
-			Str("operation", "torrent-get").
-			Int64("id", t.ID).
-			Str("hash", t.Hash).
-			Str("name", t.Name).
-			Str("status", t.Status).
-			Int("size", t.Size).
-			Float64("percent_done", percentDone).
-			Msg("Added torrent to response")
+		torrents = append(torrents, s.torrentInfo(t, transferCtx))
 	}
+
+	// Transfers we are still tracking locally that put.io no longer lists —
+	// e.g. cleared from the put.io web UI while we were still pulling the
+	// files. Without these the *arr client sees the download vanish from its
+	// queue and never imports what we finish downloading.
+	s.dlService.GetAllTransfers(func(ctx *download.TransferContext) {
+		if listed[ctx.ID] || ctx.Hash == "" || !wanted(ctx.Hash) {
+			return
+		}
+		log.Debug("rpc").
+			Str("operation", "torrent-get").
+			Int64("id", ctx.ID).
+			Str("name", ctx.Name).
+			Msg("Transfer missing on put.io, reporting from local tracking")
+		torrents = append(torrents, s.torrentInfo(orphanTransfer(ctx), ctx))
+	})
 
 	// Log the final count of torrents in the response
 	log.Debug("rpc").
@@ -281,6 +220,92 @@ func (s *Server) handleTorrentGet(_ context.Context, args json.RawMessage) (inte
 	return result, nil
 }
 
+// orphanTransfer builds a put.io-shaped transfer record from local tracking
+// only, for transfers put.io has stopped listing. put.io had finished with it
+// (we only start pulling files once it is COMPLETED/SEEDING), so the remote
+// half of the progress is complete.
+func orphanTransfer(ctx *download.TransferContext) *putio.Transfer {
+	_, totalSize, _, _ := ctx.GetProgress()
+	return &putio.Transfer{
+		ID:          ctx.ID,
+		Hash:        ctx.Hash,
+		Name:        ctx.Name,
+		FileID:      ctx.FileID,
+		Size:        int(totalSize),
+		PercentDone: 100,
+		Status:      "COMPLETED",
+	}
+}
+
+// torrentInfo converts a put.io transfer (plus optional local tracking) into
+// a transmission torrent object.
+func (s *Server) torrentInfo(t *putio.Transfer, transferCtx *download.TransferContext) map[string]interface{} {
+	// Calculate combined progress
+	prog := calculateProgress(progressInput{
+		PutioPercentDone: t.PercentDone,
+		PutioStatus:      t.Status,
+		PutioSize:        t.Size,
+		TransferCtx:      transferCtx,
+	})
+
+	percentDone := prog.PercentDone
+	status := prog.Status
+	leftUntilDone := prog.LeftUntilDone
+	eta := t.EstimatedTime
+	rateDownload := t.DownloadSpeed
+
+	// Override ETA and rate with local values when available
+	if !prog.LocalETA.IsZero() {
+		if secsUntil := int64(time.Until(prog.LocalETA).Seconds()); secsUntil > 0 {
+			eta = secsUntil
+		}
+		if prog.LocalSpeed > 0 {
+			rateDownload = int(prog.LocalSpeed)
+		}
+	}
+
+	log.Debug("rpc").
+		Str("operation", "torrent-get").
+		Int64("id", t.ID).
+		Str("name", t.Name).
+		Float64("percent_done", percentDone*100).
+		Int64("left_until_done", leftUntilDone).
+		Int("status", status).
+		Msg("Calculated progress")
+
+	return map[string]interface{}{
+		"id":             t.ID,
+		"hashString":     t.Hash,
+		"name":           t.Name,
+		"eta":            eta,
+		"status":         status,
+		"downloadDir":    filepath.Join(s.cfg.TargetDir, s.dlService.GetCategory(t.Hash)),
+		"totalSize":      t.Size,
+		"leftUntilDone":  leftUntilDone,
+		"uploadedEver":   t.Uploaded,
+		"downloadedEver": t.Downloaded,
+		"percentDone":    percentDone,
+		"rateDownload":   rateDownload,
+		"rateUpload":     t.UploadSpeed,
+		// We download over HTTP (aria2c) and never seed, so the seed goal is
+		// always satisfied. *arr's Transmission client only removes a
+		// completed download once HasReachedSeedLimit() is true, which needs a
+		// per-torrent seed ratio (mode 1) whose limit (0) is already met.
+		// Without these a stopped/finished transfer is never removed, leaving
+		// the local copy in the download dir after import.
+		"seedRatioMode":  1,
+		"seedRatioLimit": 0,
+		"uploadRatio": func() float64 {
+			if t.Size > 0 {
+				return float64(t.Uploaded) / float64(t.Size)
+			}
+			return 0
+		}(),
+		"error":       t.ErrorMessage != "",
+		"errorString": t.ErrorMessage,
+	}
+}
+
 // handleTorrentRemove processes torrent-remove requests
 func (s *Server) handleTorrentRemove(ctx context.Context, args json.RawMessage) (interface{}, error) {
 	var params struct {
@@ -293,8 +318,21 @@ func (s *Server) handleTorrentRemove(ctx context.Context, args json.RawMessage) 
 	}
 
 	for _, hash := range params.IDs {
-		transfer, err := s.findTransferByHash(ctx, hash)
-		if err != nil {
+		var (
+			transfer *putio.Transfer
+			local    *download.TransferContext // set when put.io no longer lists the transfer
+		)
+		if t, err := s.findTransferByHash(ctx, hash); err == nil {
+			transfer = t
+		} else if c, ok := s.dlService.FindTransferContextByHash(hash); ok {
+			local = c
+			transfer = orphanTransfer(c)
+			log.Warn("rpc").
+				Str("operation", "torrent-remove").
+				Str("hash", hash).
+				Int64("transfer_id", c.ID).
+				Msg("Transfer missing on put.io, removing from local tracking only")
+		} else {
 			log.Error("rpc").
 				Str("operation", "torrent-remove").
 				Str("hash", hash).
@@ -302,6 +340,10 @@ func (s *Server) handleTorrentRemove(ctx context.Context, args json.RawMessage) 
 				Msg("Failed to find transfer")
 			continue
 		}
+
+		// Once we have processed a transfer its source file is already gone
+		// from put.io (see the cleanup hook in the download manager).
+		sourceGone := local != nil && local.GetState() == download.TransferLifecycleProcessed
 
 		// Seeding-only transfers (where the file was already deleted) have no
 		// file_id. Calling DeleteFile(0) would target the root folder and
@@ -312,6 +354,11 @@ func (s *Server) handleTorrentRemove(ctx context.Context, args json.RawMessage) 
 				Str("hash", hash).
 				Int64("transfer_id", transfer.ID).
 				Msg("Skipping file deletion: transfer has no associated file")
+		} else if sourceGone {
+			log.Debug("rpc").
+				Str("operation", "torrent-remove").
+				Int64("transfer_id", transfer.ID).
+				Msg("Skipping file deletion: source file already cleaned up")
 		} else if err := s.client.DeleteFile(ctx, transfer.FileID); err != nil {
 			log.Error("rpc").
 				Str("operation", "torrent-remove").
@@ -321,7 +368,14 @@ func (s *Server) handleTorrentRemove(ctx context.Context, args json.RawMessage) 
 				Msg("Failed to delete transfer files")
 		}
 
-		if err := s.client.DeleteTransfer(ctx, transfer.ID); err != nil {
+		if local != nil {
+			log.Info("rpc").
+				Str("operation", "torrent-remove").
+				Str("hash", hash).
+				Int64("transfer_id", transfer.ID).
+				Bool("delete_local_data", params.DeleteLocalData).
+				Msg("Transfer removed (local tracking only)")
+		} else if err := s.client.DeleteTransfer(ctx, transfer.ID); err != nil {
 			log.Error("rpc").
 				Str("operation", "torrent-remove").
 				Str("hash", hash).
@@ -357,7 +411,9 @@ func (s *Server) handleTorrentRemove(ctx context.Context, args json.RawMessage) 
 			}
 		}
 
-		// Clean up category mapping
+		// Stop tracking it locally so it drops out of torrent-get, and clean
+		// up the category mapping.
+		s.dlService.RemoveTransferContext(transfer.ID)
 		s.dlService.RemoveCategory(hash)
 	}
 

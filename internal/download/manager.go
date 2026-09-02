@@ -70,6 +70,16 @@ func (m *Manager) GetTransferContext(transferID int64) (*TransferContext, bool) 
 	return m.coordinator.GetTransferContext(transferID)
 }
 
+// FindTransferContextByHash returns the tracked transfer with the given info hash.
+func (m *Manager) FindTransferContextByHash(hash string) (*TransferContext, bool) {
+	return m.coordinator.FindTransferByHash(hash)
+}
+
+// RemoveTransferContext stops tracking a transfer locally.
+func (m *Manager) RemoveTransferContext(transferID int64) {
+	m.coordinator.RemoveTransfer(transferID)
+}
+
 // GetAllTransfers invokes fn for every tracked transfer (used by the dashboard).
 func (m *Manager) GetAllTransfers(fn func(*TransferContext)) {
 	m.coordinator.GetAllTransfers(fn)

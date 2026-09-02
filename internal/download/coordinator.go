@@ -2,6 +2,7 @@ package download
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/elsbrock/plundrio/internal/log"
@@ -37,10 +38,11 @@ func (tc *TransferCoordinator) RegisterCleanupHook(hook func(int64) error) {
 }
 
 // InitiateTransfer starts tracking a new transfer
-func (tc *TransferCoordinator) InitiateTransfer(id int64, name string, fileID int64, totalFiles int) *TransferContext {
+func (tc *TransferCoordinator) InitiateTransfer(id int64, name, hash string, fileID int64, totalFiles int) *TransferContext {
 	ctx := &TransferContext{
 		ID:         id,
 		Name:       name,
+		Hash:       hash,
 		FileID:     fileID,
 		TotalFiles: int32(totalFiles),
 		state:      TransferLifecycleInitial,
@@ -309,6 +311,26 @@ func (tc *TransferCoordinator) GetTransferContext(transferID int64) (*TransferCo
 		Msg("Transfer context not found in coordinator")
 
 	return nil, false
+}
+
+// FindTransferByHash returns the tracked transfer with the given info hash.
+func (tc *TransferCoordinator) FindTransferByHash(hash string) (*TransferContext, bool) {
+	var found *TransferContext
+	tc.transfers.Range(func(_, value interface{}) bool {
+		ctx := value.(*TransferContext)
+		if ctx.Hash != "" && strings.EqualFold(ctx.Hash, hash) {
+			found = ctx
+			return false
+		}
+		return true
+	})
+	return found, found != nil
+}
+
+// RemoveTransfer stops tracking a transfer. Used when the *arr client removes
+// it, so it no longer shows up in torrent-get.
+func (tc *TransferCoordinator) RemoveTransfer(transferID int64) {
+	tc.transfers.Delete(transferID)
 }
 
 // GetAllTransfers iterates over all active transfers

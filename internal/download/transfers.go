@@ -464,7 +464,7 @@ func (p *TransferProcessor) queueFileDownload(transfer *putio.Transfer, file *pu
 
 // initializeTransfer sets up transfer tracking
 func (p *TransferProcessor) initializeTransfer(transfer *putio.Transfer, filesToDownload int) bool {
-	p.manager.coordinator.InitiateTransfer(transfer.ID, transfer.Name, transfer.FileID, filesToDownload)
+	p.manager.coordinator.InitiateTransfer(transfer.ID, transfer.Name, transfer.Hash, transfer.FileID, filesToDownload)
 	if err := p.manager.coordinator.StartDownload(transfer.ID); err != nil {
 		log.Error("transfers").
 			Str("name", transfer.Name).

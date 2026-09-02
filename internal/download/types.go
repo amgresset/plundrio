@@ -65,6 +65,7 @@ func (s TransferLifecycleState) String() string {
 type TransferContext struct {
 	ID         int64
 	Name       string
+	Hash       string // torrent info hash, the id *arr clients use to address this transfer
 	FileID     int64
 	TotalFiles int32
 
