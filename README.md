@@ -66,6 +66,9 @@ put.io essentially performs the same download process.
 - 🔒 Secure OAuth token handling for put.io authentication
 - 📊 Comprehensive transfer logging with detailed metadata for all transfers
 - 🔁 Automatic retry of failed transfers with configurable retry attempts
+- 🛡️ Fake release protection: transfers with no media files (a lone `.exe`,
+  or just images and text) are refused before anything is downloaded and
+  blocklisted in the owning *arr app so it searches for a real release
 
 ## 🔧 How It Works
 
@@ -104,6 +107,33 @@ plundrio implements a specialized state tracking system to ensure seamless integ
    - This two-phase progress tracking gives *arr applications accurate visibility into both remote and local download status
 
 This approach ensures reliable integration with *arr applications while optimizing put.io storage usage.
+
+### Fake Release Protection
+
+Public trackers serve "releases" whose only content is a Windows executable
+(or a handful of images and text files) under a real-looking name. *arr
+applications only notice after the download, park the item as import-pending
+and never search again, so the episode or movie stays missing until someone
+clicks "Blocklist and Search".
+
+put.io lists a transfer's files as soon as the torrent is complete, so plundrio
+decides there, before pulling a single byte:
+
+1. A transfer that contains **no media file at all** (video, audio or ebook
+   extension) is refused. Nothing is downloaded.
+2. The transfer stays listed over Transmission RPC with an `errorString`
+   describing what it contained, so the *arr queue shows a warning.
+3. If `arr_apps` is configured, plundrio asks each app whether the download is
+   in its queue and, for the one that owns it, triggers the same
+   "blocklist and remove" action the UI button does. The app blocklists the
+   release, tells plundrio to delete it from put.io and searches again. The
+   lookup is retried for a few minutes because the app only sees the download
+   after its next client refresh.
+4. Without `arr_apps`, the refused transfer is left on put.io with the error
+   for manual cleanup.
+
+Transfers that contain a real media file are never affected, even if they also
+ship an executable.
 
 ## 📋 Prerequisites
 
@@ -243,6 +273,7 @@ download_start_window:         # Optional local download start window
   start: "23:00"
   end: "05:00"
 log_level: "info"              # Log level (trace,debug,info,warn,error,fatal,panic,none,pretty)
+arr_apps: ""                   # Optional: *arr apps to blocklist fake releases through, see below
 ```
 
 `download_start_window` only gates when plundrio may begin a new local download. It does not stop Put.io transfers from being created, and it does not interrupt downloads that are already in progress.
@@ -261,7 +292,15 @@ export PLDR_DOWNLOAD_START_WINDOW_ENABLED=true
 export PLDR_DOWNLOAD_START_WINDOW_START=23:00
 export PLDR_DOWNLOAD_START_WINDOW_END=05:00
 export PLDR_LOG_LEVEL=info
+export PLDR_ARR_APPS="sonarr=http://localhost:8989|<sonarr api key>,radarr=http://localhost:7878|<radarr api key>"
 ```
+
+`arr_apps` is a comma-separated list of `name=url|apikey` entries, one per
+*arr application that uses this plundrio instance as its download client. It
+is only used for [fake release protection](#fake-release-protection); leave
+it empty to disable that step. The API key is shown in each app under
+Settings > General > Security. Prefer the environment variable over the config
+file, as with the put.io token.
 
 ### Configuration Priority
 
@@ -294,6 +333,19 @@ To add plundrio to your *arr application (Sonarr, Radarr, etc.):
 6. Save if the test is successful
 
 plundrio will now automatically handle downloads from your *arr application through put.io.
+
+### Letting plundrio blocklist fake releases
+
+To have refused fake releases blocklisted and re-searched automatically, give
+plundrio the app's URL and API key (Settings > General > Security > API Key):
+
+```bash
+export PLDR_ARR_APPS="sonarr=http://192.168.1.10:8989|0123456789abcdef0123456789abcdef"
+```
+
+Add one entry per app, separated by commas, e.g. a Sonarr and two Radarr
+instances. plundrio only acts on queue items an app has mapped to one of its
+own series or movies, so several apps can safely share one plundrio instance.
 
 ## 🎮 Commands
 
