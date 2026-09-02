@@ -11,8 +11,11 @@ download_start_window:       # Optional local download start window
   start: "23:00"
   end: "05:00"
 log_level: "info"					  # Log level (trace,debug,info,warn,error,fatal,panic,none,pretty)
+arr_apps: ""                 # Optional: "sonarr=http://host:8989|apikey,radarr=http://host:7878|apikey"
+                             # Transfers that contain only executables (fake releases) are refused and
+                             # blocklisted through these apps so they search for another release.
 
 # Environment variables:
 # PLDR_TARGET, PLDR_FOLDER, PLDR_TOKEN, PLDR_LISTEN, PLDR_WORKERS,
 # PLDR_DOWNLOAD_START_WINDOW_ENABLED, PLDR_DOWNLOAD_START_WINDOW_START,
-# PLDR_DOWNLOAD_START_WINDOW_END, PLDR_LOG_LEVEL
+# PLDR_DOWNLOAD_START_WINDOW_END, PLDR_LOG_LEVEL, PLDR_ARR_APPS

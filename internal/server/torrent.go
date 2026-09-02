@@ -264,6 +264,13 @@ func (s *Server) torrentInfo(t *putio.Transfer, transferCtx *download.TransferCo
 		}
 	}
 
+	errorString := t.ErrorMessage
+	if transferCtx != nil && transferCtx.GetState() == download.TransferLifecycleFailed {
+		if err := transferCtx.GetError(); err != nil && errorString == "" {
+			errorString = err.Error()
+		}
+	}
+
 	log.Debug("rpc").
 		Str("operation", "torrent-get").
 		Int64("id", t.ID).
@@ -301,8 +308,8 @@ func (s *Server) torrentInfo(t *putio.Transfer, transferCtx *download.TransferCo
 			}
 			return 0
 		}(),
-		"error":       t.ErrorMessage != "",
-		"errorString": t.ErrorMessage,
+		"error":       errorString != "",
+		"errorString": errorString,
 	}
 }
 

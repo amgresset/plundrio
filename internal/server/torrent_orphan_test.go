@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/elsbrock/go-putio"
@@ -223,5 +224,26 @@ func TestTorrentRemoveOfListedTransferAlsoDropsLocalTracking(t *testing.T) {
 	dl.transfers = nil
 	if got := torrentGet(t, s, `{}`); len(got) != 0 {
 		t.Fatalf("after removal nothing should be listed, got %d", len(got))
+	}
+}
+
+func TestTorrentGetReportsFakeReleaseAsError(t *testing.T) {
+	tc := download.NewTransferCoordinator(func(int64) {})
+	tc.InitiateTransfer(7, "Show S01E01", "abc123", 500, 0)
+	if err := tc.FailTransfer(7, &download.FakeReleaseError{Detail: "only executable \"Show S01E01.exe\""}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, _ := tc.GetTransferContext(7)
+	dl := &stubDL{
+		transfers: []*putio.Transfer{{ID: 7, Hash: "abc123", Name: "Show S01E01", Status: "COMPLETED", PercentDone: 100, Size: 1000}},
+		ctxs:      map[int64]*download.TransferContext{7: ctx},
+	}
+	s := newTestServer(t, &stubPutio{}, dl)
+	got := torrentGet(t, s, `{}`)
+	if len(got) != 1 || got[0]["error"] != true {
+		t.Fatalf("expected an errored torrent, got %v", got)
+	}
+	if es, _ := got[0]["errorString"].(string); !strings.Contains(es, "fake release") {
+		t.Fatalf("errorString should explain the refusal, got %q", es)
 	}
 }

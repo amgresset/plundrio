@@ -67,6 +67,10 @@ var runCmd = &cobra.Command{
 		oauthToken := viper.GetString("token")
 		listenAddr := viper.GetString("listen")
 		workerCount := viper.GetInt("workers")
+		arrApps, err := config.ParseArrApps(viper.GetString("arr_apps"))
+		if err != nil {
+			log.Fatal("config").Err(err).Msg("Invalid arr_apps configuration")
+		}
 		downloadStartWindow := config.DownloadStartWindowConfig{
 			Enabled: viper.GetBool("download_start_window.enabled"),
 			Start:   viper.GetString("download_start_window.start"),
@@ -78,6 +82,7 @@ var runCmd = &cobra.Command{
 			Str("putio_folder", putioFolder).
 			Str("listen_addr", listenAddr).
 			Int("workers", workerCount).
+			Int("arr_apps", len(arrApps)).
 			Bool("download_start_window_enabled", downloadStartWindow.Enabled).
 			Str("download_start_window_start", downloadStartWindow.Start).
 			Str("download_start_window_end", downloadStartWindow.End).
@@ -117,6 +122,7 @@ var runCmd = &cobra.Command{
 			ListenAddr:          listenAddr,
 			WorkerCount:         workerCount,
 			DownloadStartWindow: downloadStartWindow,
+			ArrApps:             arrApps,
 		}
 
 		if err := download.ValidateStartWindow(cfg.DownloadStartWindow); err != nil {

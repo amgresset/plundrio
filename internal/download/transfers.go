@@ -325,6 +325,11 @@ func (p *TransferProcessor) processTransfer(transfer *putio.Transfer) {
 		return
 	}
 
+	if fake, detail := looksLikeFakeRelease(files); fake {
+		p.refuseFakeTransfer(transfer, detail)
+		return
+	}
+
 	// Initialize transfer with total number of files
 	if !p.initializeTransfer(transfer, len(files)) {
 		return
@@ -341,6 +346,27 @@ func (p *TransferProcessor) processTransfer(transfer *putio.Transfer) {
 			Msg("All files already exist, completing transfer")
 		p.manager.coordinator.CompleteTransfer(transfer.ID)
 		return
+	}
+}
+
+// refuseFakeTransfer handles a transfer that contains no media files (a lone
+// executable, or just images/text): nothing is downloaded, the transfer is kept (and reported with
+// an error so the *arr client shows a warning), and the configured *arr apps
+// are asked to blocklist the release so they search for another one.
+func (p *TransferProcessor) refuseFakeTransfer(transfer *putio.Transfer, detail string) {
+	err := &FakeReleaseError{Detail: detail}
+	log.Warn("transfers").
+		Str("name", transfer.Name).
+		Int64("id", transfer.ID).
+		Str("hash", transfer.Hash).
+		Str("contents", detail).
+		Msg("Refusing transfer: looks like a fake release (no media files)")
+
+	p.manager.coordinator.InitiateTransfer(transfer.ID, transfer.Name, transfer.Hash, transfer.FileID, 0)
+	p.manager.coordinator.FailTransfer(transfer.ID, err)
+
+	if p.manager.arr != nil && transfer.Hash != "" {
+		go p.manager.arr.BlocklistWithRetry(p.manager.Context(), transfer.Hash, transfer.Name)
 	}
 }
 

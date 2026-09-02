@@ -30,6 +30,7 @@ type Manager struct {
 
 	coordinator *TransferCoordinator // Coordinates transfer lifecycle
 	categories  *CategoryStore       // Maps transfer hash → category subfolder
+	arr         *ArrNotifier         // Blocklists fake releases through *arr apps (nil when unconfigured)
 	activeFiles sync.Map             // map[int64]int64 - tracks files being downloaded, FileID -> TransferID
 
 	ctx    context.Context
@@ -119,6 +120,7 @@ func New(cfg *config.Config, client PutioClient) *Manager {
 		stopChan:    make(chan struct{}),
 		jobs:        make(chan downloadJob, workerCount*dlConfig.BufferMultiple),
 		activeFiles: sync.Map{},
+		arr:         NewArrNotifier(cfg.ArrApps),
 	}
 
 	// Initialize coordinator and processor

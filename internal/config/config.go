@@ -8,6 +8,14 @@ type DownloadStartWindowConfig struct {
 	End     string
 }
 
+// ArrApp is a Sonarr/Radarr-style application that uses plundrio as its
+// download client. Used to blocklist fake releases through the app's own API.
+type ArrApp struct {
+	Name   string
+	URL    string // e.g. http://192.168.0.20:8989
+	APIKey string
+}
+
 // Config holds the runtime configuration
 type Config struct {
 	// TargetDir is where completed downloads will be stored
@@ -30,4 +38,8 @@ type Config struct {
 
 	// DownloadStartWindow optionally restricts when new local downloads may start.
 	DownloadStartWindow DownloadStartWindowConfig
+
+	// ArrApps are the *arr applications to notify when a transfer turns out to
+	// be a fake release (no media files, only executables).
+	ArrApps []ArrApp
 }
