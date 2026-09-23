@@ -9,7 +9,9 @@ import (
 type downloadJob struct {
 	FileID     int64
 	Name       string
-	TransferID int64 // Parent transfer ID for group tracking
+	TransferID int64  // Parent transfer ID for group tracking
+	Size       int64  // Expected size reported by put.io
+	CRC32      string // Expected CRC32 reported by put.io (hex, may be empty)
 }
 
 // DownloadState tracks the progress of a file download
@@ -17,6 +19,8 @@ type DownloadState struct {
 	TransferID   int64
 	FileID       int64
 	Name         string
+	Size         int64
+	CRC32        string
 	Progress     float64
 	ETA          time.Time
 	LastProgress time.Time

@@ -3,7 +3,9 @@ package download
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"os"
 	"os/exec"
@@ -32,6 +34,8 @@ func (m *Manager) downloadWorker() {
 				FileID:     job.FileID,
 				Name:       job.Name,
 				TransferID: job.TransferID,
+				Size:       job.Size,
+				CRC32:      job.CRC32,
 				StartTime:  time.Now(),
 			}
 			err := m.downloadWithRetry(state)
@@ -107,6 +111,12 @@ func isTransientError(err error) bool {
 		return false
 	}
 
+	// A corrupt download is worth fetching again from scratch
+	var downloadErr *DownloadError
+	if errors.As(err, &downloadErr) && downloadErr.Type == "VerificationFailed" {
+		return true
+	}
+
 	// Check for transient network errors
 	if err.Error() == "connection reset" ||
 		err.Error() == "connection refused" ||
@@ -173,8 +183,8 @@ func (m *Manager) downloadFile(state *DownloadState) error {
 		"--timeout=60",
 		"--allow-overwrite=true",
 		"--auto-file-renaming=false",
-		"--continue=true", // Resume support
-		"--summary-interval=0", // Disable summary to reduce output
+		"--continue=true",            // Resume support
+		"--summary-interval=0",       // Disable summary to reduce output
 		"--console-log-level=notice", // Reduce console spam
 		"-d", targetDir,
 		"-o", filepath.Base(targetPath),
@@ -226,6 +236,18 @@ func (m *Manager) downloadFile(state *DownloadState) error {
 		return fmt.Errorf("aria2c failed: %w", cmdErr)
 	}
 
+	// aria2c can exit cleanly with segments left unwritten in the preallocated
+	// file, so check the content against what put.io reports before handing it on
+	if err := verifyDownload(targetPath, state.Size, state.CRC32); err != nil {
+		log.Error("download").
+			Str("file_name", state.Name).
+			Err(err).
+			Msg("Downloaded file failed verification, discarding it")
+		os.Remove(targetPath)
+		os.Remove(targetPath + ".aria2")
+		return NewVerificationFailedError(state.Name, err.Error())
+	}
+
 	// Verify file exists and get size
 	fileInfo, err := os.Stat(targetPath)
 	if err != nil {
@@ -256,8 +278,41 @@ func (m *Manager) downloadFile(state *DownloadState) error {
 		Float64("speed_mbps", averageSpeedMBps).
 		Dur("duration", time.Since(state.StartTime)).
 		Str("target_path", targetPath).
+		Str("crc32", state.CRC32).
 		Msg("Download completed with aria2c")
 
+	return nil
+}
+
+// verifyDownload checks a finished file against the size and CRC32 put.io reports.
+// Either expectation may be missing (zero size / empty CRC), in which case it is skipped.
+func verifyDownload(path string, wantSize int64, wantCRC32 string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open: %w", err)
+	}
+	defer f.Close()
+
+	if wantSize > 0 {
+		info, err := f.Stat()
+		if err != nil {
+			return fmt.Errorf("stat: %w", err)
+		}
+		if info.Size() != wantSize {
+			return fmt.Errorf("size mismatch: got %d bytes, want %d", info.Size(), wantSize)
+		}
+	}
+
+	if wantCRC32 == "" {
+		return nil
+	}
+	h := crc32.NewIEEE()
+	if _, err := io.Copy(h, f); err != nil {
+		return fmt.Errorf("read: %w", err)
+	}
+	if got := fmt.Sprintf("%08x", h.Sum32()); !strings.EqualFold(got, wantCRC32) {
+		return fmt.Errorf("crc32 mismatch: got %s, want %s", got, wantCRC32)
+	}
 	return nil
 }
 

@@ -23,6 +23,14 @@ func NewDownloadCancelledError(filename, reason string) error {
 	}
 }
 
+// NewVerificationFailedError creates a new error for downloads whose content doesn't match put.io
+func NewVerificationFailedError(filename, reason string) error {
+	return &DownloadError{
+		Type:    "VerificationFailed",
+		Message: fmt.Sprintf("Download of %s failed verification: %s", filename, reason),
+	}
+}
+
 // NewTransferNotFoundError creates a new error for transfer not found situations
 func NewTransferNotFoundError(transferID int64) error {
 	return &DownloadError{

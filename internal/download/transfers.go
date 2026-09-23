@@ -480,6 +480,8 @@ func (p *TransferProcessor) queueFileDownload(transfer *putio.Transfer, file *pu
 		FileID:     file.ID,
 		Name:       filepath.Join(category, transfer.Name, file.Name),
 		TransferID: transfer.ID,
+		Size:       file.Size,
+		CRC32:      file.CRC32,
 	})
 	log.Debug("transfers").
 		Str("file_name", file.Name).
